@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reading Time Calculator</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.js"></script>
+</head>
+<body class="bg-gray-100 p-8">
+    <div class="max-w-md mx-auto bg-white rounded-xl shadow-md overflow-hidden md:max-w-2xl p-6">
+        <h1 class="text-2xl font-bold mb-4">Reading Time Calculator</h1>
+        <div class="mb-4">
+            <label for="wordCount" class="block text-sm font-medium text-gray-700">Word Count:</label>
+            <input type="number" id="wordCount" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500" readonly>
+        </div>
+        <div class="mb-4">
+            <label for="readingSpeed" class="block text-sm font-medium text-gray-700">Your Reading Speed (words per minute):</label>
+            <input type="number" id="readingSpeed" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500" placeholder="Enter your reading speed">
+        </div>
+        <button onclick="calculateReadingTime()" class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">Calculate</button>
+        <p id="result" class="mt-4 text-lg font-semibold"></p>
+    </div>
+
+    <script>
+        // Function to get URL parameters
+        function getUrlParameter(name) {
+            name = name.replace(/[\[]/, '\\[').replace(/[\]]/, '\\]');
+            var regex = new RegExp('[\\?&]' + name + '=([^&#]*)');
+            var results = regex.exec(location.search);
+            return results === null ? '' : decodeURIComponent(results[1].replace(/\+/g, ' '));
+        };
+
+        // Set word count from URL parameter
+        window.onload = function() {
+            var wordCount = getUrlParameter('wordCount');
+            if (wordCount) {
+                document.getElementById('wordCount').value = wordCount;
+            }
+        };
+
+        function calculateReadingTime() {
+            const wordCount = document.getElementById('wordCount').value;
+            const readingSpeed = document.getElementById('readingSpeed').value;
+            
+            if (wordCount && readingSpeed) {
+                const timeInMinutes = wordCount / readingSpeed;
+                const hours = Math.floor(timeInMinutes / 60);
+                const minutes = Math.round(timeInMinutes % 60);
+                
+                let result = 'Estimated reading time: ';
+                if (hours > 0) {
+                    result += `${hours} hour${hours > 1 ? 's' : ''} `;
+                }
+                if (minutes > 0 || hours === 0) {
+                    result += `${minutes} minute${minutes !== 1 ? 's' : ''}`;
+                }
+                
+                document.getElementById('result').textContent = result;
+            } else {
+                document.getElementById('result').textContent = 'Please enter your reading speed.';
+            }
+        }
+    </script>
+</body>
+</html>
