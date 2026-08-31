@@ -46,23 +46,40 @@
   <script>
     const qs = new URLSearchParams(location.search);
     const nums = (s) => (s || "").split(",").map(x => parseInt(x, 10)).filter(n => !isNaN(n));
-    // all = per-week TOTAL word counts, in week order
+
+    // Primary scheme: ?course=<slug>&unit=<class-day #>. The full distribution
+    // (every class's required word total + breakdown) lives in a shared per-
+    // course JSON on this site (data/<course>.json), so editing one class's
+    // readings means republishing just that JSON — every class's chart updates
+    // from it, with no need to re-push the other Canvas pages. `unit` is matched
+    // against the JSON's labels to highlight the right bar.
+    // Legacy scheme (older Canvas pages): baked ?all=&labels=&parts=&wordCount=&current=.
+    const courseSlug = (qs.get("course") || "").replace(/[^a-z0-9_-]/gi, "");
+    const unitLabel = (qs.get("unit") || "").trim();
+
     let all = nums(qs.get("all"));
-    // parts = per-week reading breakdown: weeks separated by ";", readings by ","
-    const parts = (qs.get("parts") || "").split(";").map(w => nums(w)).filter(a => a.length);
-    // labels = per-week short labels (for tooltip / axis); current = 1-based index
-    const labels = (qs.get("labels") || "").split(",").map(s => s.trim());
-    const thisWords = parseInt(qs.get("wordCount"), 10) || 0;
+    let parts = (qs.get("parts") || "").split(";").map(w => nums(w)).filter(a => a.length);
+    let labels = (qs.get("labels") || "").split(",").map(s => s.trim()).filter(Boolean);
     let current = parseInt(qs.get("current"), 10) || 0;   // 1-based
     let wpm = parseInt(qs.get("wpm"), 10) || 250;
+    const thisWords = parseInt(qs.get("wordCount"), 10) || 0;
 
-    // Fallbacks so the page still works with just ?wordCount= (old behavior).
+    // Legacy fallbacks so an old ?wordCount= link still works.
     if (!all.length && thisWords) all = [thisWords];
-    if (!current && thisWords) {
-      const i = all.indexOf(thisWords);
-      current = i >= 0 ? i + 1 : all.length;   // best guess
-    }
+    if (!current && thisWords) { const i = all.indexOf(thisWords); current = i >= 0 ? i + 1 : all.length; }
     if (!current) current = 1;
+
+    // Find which bar is "this class". Prefer matching ?unit= against the JSON's
+    // stable unit ids (survives reorders — the JSON carries the new order);
+    // fall back to matching a display label for legacy id-less links.
+    let ids = [];
+    const locateCurrent = () => {
+      if (!unitLabel) return;
+      let i = ids.indexOf(unitLabel);
+      if (i < 0) i = labels.indexOf(unitLabel);
+      if (i >= 0) current = i + 1;
+    };
+    locateCurrent();
 
     const wpmEl = document.getElementById("wpm");
     const chart = document.getElementById("chart");
@@ -83,6 +100,14 @@
     function render() {
       wpm = parseInt(wpmEl.value, 10);
       document.getElementById("wpmLabel").textContent = wpm;
+      if (!all.length) {   // course JSON still loading, no baked data yet
+        document.getElementById("thisTime").textContent = "…";
+        document.getElementById("thisWords").textContent = "…";
+        document.getElementById("insight").textContent = "loading…";
+        document.getElementById("legend").textContent = "";
+        chart.innerHTML = "";
+        return;
+      }
       const curWords = all[current - 1] || thisWords || 0;
       document.getElementById("thisWords").textContent = fmt(curWords);
       document.getElementById("thisTime").textContent = fmtTime(mins(curWords));
@@ -169,6 +194,25 @@
 
     wpmEl.addEventListener("input", render);
     render();
+
+    // When a ?course= is present, the full distribution lives in a shared JSON
+    // on this site (data/<course>.json), NOT baked into every Canvas URL — so
+    // editing one class's readings only requires republishing that one JSON and
+    // every class's chart updates from it. current/wordCount stay in the URL.
+    (async () => {
+      if (!courseSlug) return;
+      try {
+        const r = await fetch("data/" + courseSlug + ".json", { cache: "no-store" });
+        if (!r.ok) return;
+        const j = await r.json();
+        if (Array.isArray(j.all) && j.all.length) all = j.all.map(n => +n || 0);
+        if (Array.isArray(j.labels) && j.labels.length) labels = j.labels.map(String);
+        if (Array.isArray(j.ids) && j.ids.length) ids = j.ids.map(String);
+        if (Array.isArray(j.parts)) parts = j.parts.map(p => Array.isArray(p) ? p.map(n => +n || 0) : nums(p));
+        locateCurrent();
+        render();
+      } catch (e) { /* keep whatever the URL already provided */ }
+    })();
   </script>
 </body>
 </html>
