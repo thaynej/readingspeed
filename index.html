@@ -1,48 +1,160 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Reading Time Calculator</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reading Time Calculator</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* Transparent so it blends into the Canvas page it's embedded in. */
+    html, body { background: transparent; }
+    input[type=range] { accent-color: #4f46e5; }
+    .bar { transition: height .18s ease, y .18s ease; cursor: default; }
+    .bar-seg { transition: height .18s ease, y .18s ease; }
+  </style>
 </head>
-<body class="bg-transparent">
-    <div class="flex items-center justify-between p-4 bg-slate-100 rounded-lg shadow-sm max-w-2xl">
-        <h2 class="text-lg font-light">Estimated reading time: <span id="result" class="font-light"></span></h2>
-        <div class="flex items-center space-x-4">
-            <span id="speedDisplay" class="text-sm">250 wpm</span>
-            <input type="range" id="readingSpeed" min="100" max="500" value="250" class="w-40 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+<body class="text-slate-800">
+  <div class="max-w-2xl mx-auto p-4">
+    <!-- Headline + speed control -->
+    <div class="flex items-center justify-between gap-4 flex-wrap">
+      <div>
+        <div class="text-[11px] uppercase tracking-wide text-slate-400">This class</div>
+        <div class="text-2xl font-semibold text-slate-900">
+          <span id="thisTime">—</span>
+          <span class="text-base font-normal text-slate-500">at <span id="wpmLabel">250</span> wpm</span>
         </div>
+        <div class="text-xs text-slate-500"><span id="thisWords">0</span> words · <span id="insight">—</span></div>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="text-xs text-slate-400">slower</span>
+        <input type="range" id="wpm" min="100" max="500" value="250" class="w-40 h-2 rounded-lg cursor-pointer">
+        <span class="text-xs text-slate-400">faster</span>
+      </div>
     </div>
 
-    <script>
-        const readingSpeedInput = document.getElementById('readingSpeed');
-        const speedDisplay = document.getElementById('speedDisplay');
-        const resultDisplay = document.getElementById('result');
+    <!-- Distribution: every week's reading time, this week highlighted -->
+    <div id="chartWrap" class="mt-4">
+      <div class="flex items-baseline justify-between">
+        <div class="text-[11px] uppercase tracking-wide text-slate-400">How every class compares (in your time)</div>
+        <div id="legend" class="text-[11px] text-slate-400"></div>
+      </div>
+      <svg id="chart" width="100%" viewBox="0 0 720 220" class="mt-1" font-family="ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif"></svg>
+    </div>
+    <div id="tip" class="pointer-events-none fixed z-50 hidden rounded-md bg-slate-900 text-white text-xs px-2 py-1 shadow-lg"></div>
+  </div>
 
-        // Function to get URL parameters
-        function getUrlParameter(name) {
-            name = name.replace(/[\[]/, '\\[').replace(/[\]]/, '\\]');
-            var regex = new RegExp('[\\?&]' + name + '=([^&#]*)');
-            var results = regex.exec(location.search);
-            return results === null ? '' : decodeURIComponent(results[1].replace(/\+/g, ' '));
-        }
+  <script>
+    const qs = new URLSearchParams(location.search);
+    const nums = (s) => (s || "").split(",").map(x => parseInt(x, 10)).filter(n => !isNaN(n));
+    // all = per-week TOTAL word counts, in week order
+    let all = nums(qs.get("all"));
+    // parts = per-week reading breakdown: weeks separated by ";", readings by ","
+    const parts = (qs.get("parts") || "").split(";").map(w => nums(w)).filter(a => a.length);
+    // labels = per-week short labels (for tooltip / axis); current = 1-based index
+    const labels = (qs.get("labels") || "").split(",").map(s => s.trim());
+    const thisWords = parseInt(qs.get("wordCount"), 10) || 0;
+    let current = parseInt(qs.get("current"), 10) || 0;   // 1-based
+    let wpm = parseInt(qs.get("wpm"), 10) || 250;
 
-        const wordCount = parseInt(getUrlParameter('wordCount')) || 5000;
+    // Fallbacks so the page still works with just ?wordCount= (old behavior).
+    if (!all.length && thisWords) all = [thisWords];
+    if (!current && thisWords) {
+      const i = all.indexOf(thisWords);
+      current = i >= 0 ? i + 1 : all.length;   // best guess
+    }
+    if (!current) current = 1;
 
-        function calculateReadingTime() {
-            const readingSpeed = parseInt(readingSpeedInput.value);
-            const timeInMinutes = wordCount / readingSpeed;
-            const minutes = Math.round(timeInMinutes);
-            resultDisplay.textContent = `${minutes} minute${minutes !== 1 ? 's' : ''}`;
-        }
+    const wpmEl = document.getElementById("wpm");
+    const chart = document.getElementById("chart");
+    const tip = document.getElementById("tip");
+    wpmEl.value = wpm;
 
-        readingSpeedInput.addEventListener('input', () => {
-            speedDisplay.textContent = `${readingSpeedInput.value} wpm`;
-            calculateReadingTime();
+    const fmt = (n) => n.toLocaleString();
+    const mins = (words) => words / wpm;
+    const fmtTime = (m) => {
+      if (m < 1) return "<1 min";
+      if (m < 60) return Math.round(m) + " min";
+      const h = Math.floor(m / 60), r = Math.round(m % 60);
+      return r ? `${h} hr ${r} min` : `${h} hr`;
+    };
+
+    const ACCENT = "#4f46e5", BASE = "#cbd5e1", BASE2 = "#e2e8f0";
+
+    function render() {
+      wpm = parseInt(wpmEl.value, 10);
+      document.getElementById("wpmLabel").textContent = wpm;
+      const curWords = all[current - 1] || thisWords || 0;
+      document.getElementById("thisWords").textContent = fmt(curWords);
+      document.getElementById("thisTime").textContent = fmtTime(mins(curWords));
+
+      // Insight: percentile among all weeks.
+      const below = all.filter(w => w < curWords).length;
+      const pct = all.length > 1 ? Math.round(100 * below / (all.length - 1)) : 50;
+      const med = [...all].sort((a, b) => a - b)[Math.floor(all.length / 2)] || 0;
+      let word = "about an average class";
+      if (pct >= 60) word = `heavier than ${pct}% of classes`;
+      else if (pct <= 40) word = `lighter than ${100 - pct}% of classes`;
+      document.getElementById("insight").textContent =
+        `${word} · median ≈ ${fmtTime(mins(med))}`;
+      document.getElementById("legend").textContent =
+        `${all.length} classes · median ${fmtTime(mins(med))}`;
+
+      // Bar chart: x = weeks in order, height = reading time at current wpm.
+      const W = 720, H = 220, padT = 14, padB = 26, padL = 8, padR = 8;
+      const n = all.length;
+      const maxT = Math.max(...all.map(mins), 1);
+      const plotH = H - padT - padB;
+      const slot = (W - padL - padR) / n;
+      const bw = Math.max(3, Math.min(26, slot * 0.68));
+      const yFor = (t) => padT + plotH - (t / maxT) * plotH;
+
+      let svg = "";
+      // baseline
+      svg += `<line x1="${padL}" y1="${padT + plotH}" x2="${W - padR}" y2="${padT + plotH}" stroke="${BASE2}" stroke-width="1"/>`;
+      for (let i = 0; i < n; i++) {
+        const x = padL + i * slot + (slot - bw) / 2;
+        const isCur = (i + 1) === current;
+        const total = all[i];
+        const tp = parts[i] && parts[i].length ? parts[i] : [total];
+        // stacked segments (readings) — alternating shade so splits read as "density"
+        let y = padT + plotH;
+        const segFill = isCur ? ACCENT : BASE;
+        const segFill2 = isCur ? "#6366f1" : "#dbe2ea";
+        tp.forEach((seg, si) => {
+          const h = (mins(seg) / maxT) * plotH;
+          y -= h;
+          svg += `<rect class="bar-seg" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(0, h).toFixed(1)}" rx="2" `
+               + `fill="${si % 2 ? segFill2 : segFill}" data-i="${i}"/>`;
         });
+        if (isCur) {
+          const yt = yFor(mins(total));
+          svg += `<circle cx="${(x + bw / 2).toFixed(1)}" cy="${(yt - 8).toFixed(1)}" r="3" fill="${ACCENT}"/>`;
+        }
+        // week label under every few bars to avoid clutter
+        if (n <= 24 || i % 2 === 0 || isCur) {
+          const lbl = labels[i] || (i + 1);
+          svg += `<text x="${(x + bw / 2).toFixed(1)}" y="${H - 9}" text-anchor="middle" font-size="9" `
+               + `fill="${isCur ? ACCENT : "#94a3b8"}" font-weight="${isCur ? 700 : 400}">${lbl}</text>`;
+        }
+      }
+      chart.innerHTML = svg;
 
-        calculateReadingTime();
-    </script>
+      // tooltips
+      chart.querySelectorAll("[data-i]").forEach(el => {
+        el.addEventListener("mousemove", (e) => {
+          const i = +el.dataset.i;
+          const lbl = "Class " + (labels[i] || (i + 1));
+          tip.innerHTML = `<b>${lbl}</b> · ${fmt(all[i])} words · ${fmtTime(mins(all[i]))}`;
+          tip.style.left = (e.clientX + 12) + "px";
+          tip.style.top = (e.clientY + 12) + "px";
+          tip.classList.remove("hidden");
+        });
+        el.addEventListener("mouseleave", () => tip.classList.add("hidden"));
+      });
+    }
+
+    wpmEl.addEventListener("input", render);
+    render();
+  </script>
 </body>
 </html>
